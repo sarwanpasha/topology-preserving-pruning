@@ -21,6 +21,9 @@ METHODS = {
     'ts_iter':     ('tsmag',    True,  'topo'),    # ours, iterative
     'ts_fisher':   ('tsfisher', False, 'topo'),    # ours, task-Fisher + topo-Fisher variant
     'ts_taskft':   ('tsmag',    False, 'task'),    # ablation: our score, plain fine-tuning
+    'synflow_topo':   ('synflow',     False, 'topo'),  # strongest baseline + topological fine-tuning
+    'alloc_mag_topo': ('alloc:mag',   False, 'topo'),  # SynFlow layer allocation, magnitude within layers
+    'ts_alloc':       ('alloc:tsmag', False, 'topo'),  # ours: SynFlow layer allocation, TopoSaliency within layers
 }
 
 def main():
@@ -70,7 +73,11 @@ def main():
             t0 = time.time()
             torch.manual_seed(1000 * a.seed + int(sp * 1000)); data.rng = np.random.RandomState(a.seed * 7 + 1)
             m = C.UNet(data.inch).to(dev); m.load_state_dict(dense.state_dict()); mk = C.Masker(m)
-            if score == 'synflow':
+            if score.startswith('alloc:'):
+                counts = C.synflow_allocation(lambda: C.UNet(data.inch), dense.state_dict(), (1, data.inch, 64, 64), sp, dev)
+                mk.prune_to_counts(C.compute_scores(score.split(':')[1], m, mk, data, pool, a.lam), counts)
+                C.train_loop(m, data, a.ft_iters, a.lr_ft, pool, mk, ft, a.lam_topo)
+            elif score == 'synflow':
                 C.prune_synflow(m, mk, (1, data.inch, 64, 64), sp, dev)
                 C.train_loop(m, data, a.ft_iters, a.lr_ft, pool, mk, ft, a.lam_topo, log=log)
             elif iterative:

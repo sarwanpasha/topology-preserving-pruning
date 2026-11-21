@@ -8,10 +8,10 @@ import os, sys, json, time, argparse, threading, subprocess, collections
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEG_DS = ['isbi', 'stare', 'roads']
 SEG_M = ['mag', 'imp', 'random', 'taylor', 'synflow', 'mag_cl', 'mag_topo', 'imp_topo', 'taylor_topo',
-         'ts', 'ts_iter', 'ts_fisher', 'ts_taskft']
+         'ts', 'ts_iter', 'ts_fisher', 'ts_taskft', 'synflow_topo', 'alloc_mag_topo', 'ts_alloc']
 SHAPES = ['torus', 'thin_torus', 'double_torus', 'triple_torus', 'hopf_link', 'holey_cube', 'sphere']
 SDF_M = ['random', 'mag', 'imp', 'taylor', 'synflow', 'mag_topo', 'imp_topo', 'taylor_topo',
-         'ts', 'ts_iter', 'ts_fisher', 'ts_taskft']
+         'ts', 'ts_iter', 'ts_fisher', 'ts_taskft', 'synflow_topo', 'alloc_mag_topo', 'ts_alloc']
 SP = [0.8, 0.9, 0.95, 0.97, 0.99]
 
 def n_done(root, tag, sub, meth, seed):
@@ -65,7 +65,7 @@ def main():
             for j in jobs:
                 if state[j['name']] != 'todo': continue
                 if device == 'cpu' and j['kind'] == 'seg': continue      # U-Nets are GPU-only on this laptop
-                if device == 'dml' and j['name'].endswith('_synflow'): continue   # DirectML has no float64 (SynFlow)
+                if device == 'dml' and ('synflow' in j['name'] or 'alloc' in j['name']): continue   # DirectML has no float64 (SynFlow)
                 if j['dep'] and state[j['dep']] == 'failed': state[j['name']] = 'failed'; continue
                 if j['dep'] and state[j['dep']] != 'done': continue
                 state[j['name']] = 'running'; save(); return j

@@ -282,6 +282,22 @@ class Masker:
                 mt.copy_((new * (m > 0).float()).to(dev))
         self.apply()
 
+    @torch.no_grad()
+    def prune_to_counts(self, scores, counts):
+        """Keep, in every layer l, the counts[l] highest-scoring weights (layer allocation given externally)."""
+        dev = self.masks[0].device
+        for s, mt, k in zip(scores, self.masks, counts):
+            s = s.detach().float().cpu().flatten(); k = int(max(1, min(k, s.numel())))
+            new = torch.zeros_like(s); new[torch.topk(s, k).indices] = 1
+            mt.copy_(new.view(mt.shape).to(dev))
+        self.apply()
+
+def synflow_allocation(model_fn, state, in_shape, sparsity, device):
+    """Per-layer number of surviving weights chosen by SynFlow (data-free, avoids layer collapse)."""
+    m = model_fn().to(device); m.load_state_dict(state); mk = Masker(m)
+    prune_synflow(m, mk, in_shape, sparsity, device)
+    return [int(x.detach().cpu().sum().item()) for x in mk.masks]
+
 def _norm(xs, masks):
     tot = sum((x * (m > 0)).sum() for x, m in zip(xs, masks)); n = sum((m > 0).sum() for m in masks)
     mu = tot / n + 1e-30

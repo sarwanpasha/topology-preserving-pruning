@@ -202,6 +202,8 @@ METHODS = {
     'mag_topo': ('mag', False, 'topo'), 'imp_topo': ('mag', True, 'topo'), 'taylor_topo': ('taylor', False, 'topo'),
     'ts': ('tsmag', False, 'topo'), 'ts_iter': ('tsmag', True, 'topo'), 'ts_fisher': ('tsfisher', False, 'topo'),
     'ts_taskft': ('tsmag', False, 'task'),
+    'synflow_topo': ('synflow', False, 'topo'), 'alloc_mag_topo': ('alloc:mag', False, 'topo'),
+    'ts_alloc': ('alloc:tsmag', False, 'topo'),
 }
 
 def main():
@@ -243,7 +245,11 @@ def main():
             if sp in done: log(f'skip {meth} sp={sp}'); continue
             t0 = time.time(); torch.manual_seed(1000 * a.seed + int(sp * 1000)); sh.rng = np.random.RandomState(a.seed * 7 + 1)
             m = SDFNet().to(dev); m.load_state_dict(dense.state_dict()); mk = C.Masker(m)
-            if score == 'synflow':
+            if score.startswith('alloc:'):
+                counts = C.synflow_allocation(SDFNet, dense.state_dict(), (1, 3), sp, dev)
+                mk.prune_to_counts(scores_sdf(score.split(':')[1], m, mk, sh, None, a.lam), counts)
+                train_sdf(m, sh, a.ft_iters, a.lr_ft, None, mk, ft, a.lam_topo)
+            elif score == 'synflow':
                 C.prune_synflow(m, mk, (1, 3), sp, dev); train_sdf(m, sh, a.ft_iters, a.lr_ft, None, mk, ft, a.lam_topo)
             elif iterative:
                 for r in range(1, a.rounds + 1):

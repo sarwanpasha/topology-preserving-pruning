@@ -11,7 +11,7 @@
 module load anaconda; export PYTHONNOUSERSITE=1   # adjust module for your cluster
 T=${TOPO_HOME:?set TOPO_HOME to the folder that contains code/ and venv/}; export TOPO_ROOT=$T; cd $T/code; source $T/venv/bin/activate
 TAG=${TAG:-main}
-DS=(isbi stare roads); M="mag imp random taylor synflow mag_cl mag_topo imp_topo taylor_topo ts ts_iter ts_fisher ts_taskft"
+DS=(isbi stare roads); M="mag imp random taylor synflow mag_cl mag_topo imp_topo taylor_topo ts ts_iter ts_fisher ts_taskft synflow_topo alloc_mag_topo ts_alloc"
 i=$SLURM_ARRAY_TASK_ID; s=$((i % 5)); d=${DS[$((i / 5))]}
 echo "task $i ds=$d seed=$s"
 python run_seg.py --ds $d --seed $s --dense_only --workers 8 --tag $TAG
