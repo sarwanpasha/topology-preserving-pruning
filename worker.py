@@ -20,6 +20,7 @@ EST = {'seg': float(os.environ.get('TOPO_SEG_EST_MIN', '20')) * 60, 'sdf': float
 STALE = float(os.environ.get('TOPO_STALE_MIN', '75')) * 60
 SEEDS = int(os.environ.get('TOPO_SEEDS', '5')); KINDS = os.environ.get('TOPO_KINDS', 'seg,sdf').split(',')
 CPUS = int(os.environ.get('SLURM_CPUS_PER_TASK', '16'))
+SKIP = set(x for x in os.environ.get('TOPO_SKIP', '').split(',') if x)   # datasets/shapes this worker must not take
 SEG_DS = ['isbi', 'stare', 'roads']
 SHAPES = ['torus', 'thin_torus', 'double_torus', 'triple_torus', 'hopf_link', 'holey_cube', 'sphere']
 SP = [0.8, 0.9, 0.95, 0.97, 0.99]
@@ -70,7 +71,7 @@ def claim():
         left = T_END - time.time()
         for t in TASKS:
             k = t[0]
-            if left < EST[k] or is_done(t) or fails(t) >= 2: continue
+            if left < EST[k] or is_done(t) or fails(t) >= 2 or t[1] in SKIP: continue
             if k in ('seg', 'sdf') and not os.path.exists(model_path(k, t[1], t[2])): continue
             c = os.path.join(CL, name(t))
             try:
@@ -105,6 +106,12 @@ def run(t, slot):
     shutil.rmtree(os.path.join(CL, name(t)), ignore_errors=True)
     print(f'[{time.strftime("%H:%M:%S")}] slot{slot} {name(t)} rc={rc} ok={ok} {time.time()-t0:.0f}s', flush=True)
 
+def grabber():
+    # site hook: if code/grab_int.sh exists (e.g. Delta interactive partitions), run it every 10 min while alive
+    g = os.path.join(HERE, 'grab_int.sh')
+    while os.path.exists(g) and time.time() < T_END:
+        subprocess.call(['bash', g], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(600)
+
 def slot_loop(i):
     idle = 0
     while time.time() < T_END:
@@ -119,6 +126,7 @@ TASKS = build()
 if __name__ == '__main__':
     print(f'worker job={os.environ.get("SLURM_JOB_ID")} node={os.uname().nodename} slots={SLOTS} tasks={len(TASKS)} '
           f'remaining={sum(not is_done(t) for t in TASKS)}', flush=True)
+    threading.Thread(target=grabber, daemon=True).start()
     th = [threading.Thread(target=slot_loop, args=(i,)) for i in range(SLOTS)]
     for x in th: x.start(); time.sleep(5)
     for x in th: x.join()
