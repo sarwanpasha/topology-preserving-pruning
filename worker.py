@@ -14,6 +14,8 @@ import os, sys, time, json, threading, subprocess, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ['TOPO_ROOT']; TAG = os.environ.get('TOPO_TAG', 'main')
 T_END = time.time() + float(os.environ.get('TOPO_BUDGET_MIN', '55')) * 60
+if os.environ.get('SLURM_JOB_END_TIME', '').isdigit():   # never run past the job's own wall-time (slow start-up eats budget)
+    T_END = min(T_END, int(os.environ['SLURM_JOB_END_TIME']) - 360)
 SLOTS = int(os.environ.get('TOPO_SLOTS', '3'))
 EST = {'seg': float(os.environ.get('TOPO_SEG_EST_MIN', '20')) * 60, 'sdf': float(os.environ.get('TOPO_SDF_EST_MIN', '12')) * 60,
        'segd': 15 * 60, 'sdfd': 10 * 60}
@@ -91,7 +93,9 @@ def run(t, slot):
     else:
         cmd = [sys.executable, 'run_sdf.py', '--shape', d, '--seed', str(s), '--tag', TAG]
     cmd += ['--dense_only'] if k in ('segd', 'sdfd') else ['--methods', m, '--sparsities', str(sp)]
-    env = dict(os.environ, PYTHONUNBUFFERED='1', TOPO_THREADS=str(w))
+    # cap intra-op threads: torch otherwise starts one OpenMP thread per node core in every task process, and CPU ops
+    # on >32k-element tensors (3-channel / large patches) slow down ~50x from oversubscription
+    env = dict(os.environ, PYTHONUNBUFFERED='1', TOPO_THREADS=str(w), OMP_NUM_THREADS=str(w), MKL_NUM_THREADS=str(w))
     logf = os.path.join(ROOT, 'logs', 'tasks', name(t) + '.log'); t0 = time.time()
     with open(logf, 'a') as lf:
         lf.write(f'=== {time.ctime()} job {os.environ.get("SLURM_JOB_ID")} node {os.uname().nodename} slot {slot}\n'); lf.flush()
