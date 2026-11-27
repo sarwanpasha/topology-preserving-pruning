@@ -137,6 +137,7 @@ def betti2d(b):
     n1 = nb - int((border > 0).sum())
     return n0, n1
 
+CERT = os.environ.get('TOPO_CERT', '1') == '1'   # report certified-patch fractions (Theorem 1)
 ORDER = 'C'  # index order of gudhi cofaces; verified by check_gudhi_order() in smoke test
 
 def check_gudhi_order():
@@ -207,6 +208,14 @@ def topo_loss(prob, y, pool):
     return loss / B
 
 # ----------------------------------------------------------------------------- metrics
+def _margin(p, t=0.5):
+    """Persistence margin mu_t(p): distance from t to the nearest finite birth/death value (superlevel filtration)."""
+    import gudhi
+    cc = gudhi.CubicalComplex(top_dimensional_cells=-np.asarray(p, dtype=np.float64))
+    cc.compute_persistence(homology_coeff_field=2, min_persistence=0)
+    v = [-x for _, (b, d) in cc.persistence() for x in (b, d) if np.isfinite(x)]
+    return min(abs(x - t) for x in v) if v else np.inf
+
 def _img_metrics(args):
     from skimage.morphology import skeletonize
     pr, gt, dn, ps = args
@@ -215,7 +224,7 @@ def _img_metrics(args):
     sp, sg = skeletonize(pb), skeletonize(gb)
     tprec = (sp & gb).sum() / (sp.sum() + 1e-9); tsens = (sg & pb).sum() / (sg.sum() + 1e-9)
     cl = 2 * tprec * tsens / (tprec + tsens + 1e-9)
-    H, W = pb.shape; e0 = e1 = f0 = f1 = 0.; n = 0
+    H, W = pb.shape; e0 = e1 = f0 = f1 = cert = cert1 = 0.; n = 0
     db = dn > .5 if dn is not None else None
     for r in range(0, H - ps + 1, ps):
         for c in range(0, W - ps + 1, ps):
@@ -223,6 +232,10 @@ def _img_metrics(args):
             e0 += abs(a[0] - g[0]); e1 += abs(a[1] - g[1]); n += 1
             if db is not None:
                 d = betti2d(db[r:r + ps, c:c + ps]); f0 += abs(a[0] - d[0]); f1 += abs(a[1] - d[1])
+                if CERT:   # Theorem 1 (two-sided certificate) on this patch
+                    pp, dd = pr[r:r + ps, c:c + ps], dn[r:r + ps, c:c + ps]
+                    dl = float(np.abs(pp - dd).max()); mu_d = _margin(dd)
+                    cert += dl < min(mu_d, _margin(pp)); cert1 += dl < mu_d
     a, g = betti2d(pb), betti2d(gb)
     out = dict(dice=dice, cldice=cl, b0=e0 / n, b1=e1 / n, b0_img=abs(a[0] - g[0]), b1_img=abs(a[1] - g[1]))
     if db is not None:
@@ -230,6 +243,7 @@ def _img_metrics(args):
         out.update(fid_b0=f0 / n, fid_b1=f1 / n, fid_b0_img=abs(a[0] - d[0]), fid_b1_img=abs(a[1] - d[1]),
                    fid_dice=2 * (pb & db).sum() / (pb.sum() + db.sum() + 1e-9),
                    linf=float(np.abs(pr - dn).max()))
+        if CERT: out.update(cert=cert / n, cert_onesided=cert1 / n)
     return out
 
 def evaluate(model, data, pool, dense_pred=None, ps=64):

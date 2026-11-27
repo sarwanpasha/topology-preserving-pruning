@@ -18,7 +18,7 @@ if os.environ.get('SLURM_JOB_END_TIME', '').isdigit():   # never run past the jo
     T_END = min(T_END, int(os.environ['SLURM_JOB_END_TIME']) - 360)
 SLOTS = int(os.environ.get('TOPO_SLOTS', '3'))
 EST = {'seg': float(os.environ.get('TOPO_SEG_EST_MIN', '20')) * 60, 'sdf': float(os.environ.get('TOPO_SDF_EST_MIN', '12')) * 60,
-       'segd': 15 * 60, 'sdfd': 10 * 60}
+       'segd': 15 * 60, 'sdfd': 10 * 60, 'interp': 25 * 60, 'interp3d': 15 * 60}
 STALE = float(os.environ.get('TOPO_STALE_MIN', '75')) * 60
 SEEDS = int(os.environ.get('TOPO_SEEDS', '5')); KINDS = os.environ.get('TOPO_KINDS', 'seg,sdf').split(',')
 CPUS = int(os.environ.get('SLURM_CPUS_PER_TASK', '16'))
@@ -38,6 +38,10 @@ def build():
     t = []
     if 'seg' in KINDS: t += [('segd', ds, s, None, None) for s in range(SEEDS) for ds in SEG_DS]
     if 'sdf' in KINDS: t += [('sdfd', sh, s, None, None) for s in range(SEEDS) for sh in SHAPES]
+    if 'seg' in KINDS and os.environ.get('TOPO_INTERP', '1') == '1':   # interpretability / causal ablation (interp.py)
+        t += [('interp', ds, s, None, None) for s in range(min(SEEDS, 3)) for ds in SEG_DS]
+    if 'sdf' in KINDS and os.environ.get('TOPO_INTERP', '1') == '1':
+        t += [('interp3d', sh, s, None, None) for s in range(min(SEEDS, 3)) for sh in SHAPES]
     for grp_seg, grp_sdf in ((SEG_A, SDF_A), (SEG_B, SDF_B)):
         for s in range(SEEDS):
             if 'seg' in KINDS: t += [('seg', ds, s, m, sp) for ds in SEG_DS for m in grp_seg for sp in SP]
@@ -45,7 +49,7 @@ def build():
     return t
 
 def name(t): k, d, s, m, sp = t; return f'{k}_{d}_s{s}' + (f'_{m}_{sp}' if m else '')
-def model_path(k, d, s): return os.path.join(ROOT, 'models', (f'{d}_s{s}.pt' if k in ('seg', 'segd') else f'sdf_{d}_s{s}.pt'))
+def model_path(k, d, s): return os.path.join(ROOT, 'models', (f'{d}_s{s}.pt' if k in ('seg', 'segd', 'interp') else f'sdf_{d}_s{s}.pt'))
 _cache = {}
 def done_set(k, d, m):
     f = os.path.join(ROOT, 'results', TAG, d if k == 'seg' else f'sdf_{d}', f'{m}.jsonl')
@@ -62,6 +66,8 @@ def done_set(k, d, m):
 def is_done(t):
     k, d, s, m, sp = t
     if k in ('segd', 'sdfd'): return os.path.exists(model_path(k, d, s))
+    if k == 'interp': return os.path.exists(os.path.join(ROOT, 'results', 'interp', f'{d}_s{s}.json'))
+    if k == 'interp3d': return os.path.exists(os.path.join(ROOT, 'results', 'interp', f'sdf_{d}_s{s}.json'))
     return (s, sp) in done_set(k, d, m)
 def fails(t):
     try: return int(open(os.path.join(FL, name(t))).read() or 0)
@@ -74,7 +80,7 @@ def claim():
         for t in TASKS:
             k = t[0]
             if left < EST[k] or is_done(t) or fails(t) >= 2 or t[1] in SKIP: continue
-            if k in ('seg', 'sdf') and not os.path.exists(model_path(k, t[1], t[2])): continue
+            if k in ('seg', 'sdf', 'interp', 'interp3d') and not os.path.exists(model_path(k, t[1], t[2])): continue
             c = os.path.join(CL, name(t))
             try:
                 os.mkdir(c); return t
@@ -88,11 +94,16 @@ def claim():
 def run(t, slot):
     k, d, s, m, sp = t
     w = max(1, CPUS // SLOTS - 1)
-    if k in ('seg', 'segd'):
+    if k == 'interp':
+        cmd = [sys.executable, 'interp.py', '--ds', d, '--seed', str(s), '--workers', str(w)]
+    elif k == 'interp3d':
+        cmd = [sys.executable, 'interp_sdf.py', '--shape', d, '--seed', str(s)]
+    elif k in ('seg', 'segd'):
         cmd = [sys.executable, 'run_seg.py', '--ds', d, '--seed', str(s), '--workers', str(w), '--tag', TAG]
     else:
         cmd = [sys.executable, 'run_sdf.py', '--shape', d, '--seed', str(s), '--tag', TAG]
-    cmd += ['--dense_only'] if k in ('segd', 'sdfd') else ['--methods', m, '--sparsities', str(sp)]
+    if k in ('segd', 'sdfd'): cmd += ['--dense_only']
+    elif k not in ('interp', 'interp3d'): cmd += ['--methods', m, '--sparsities', str(sp)]
     # cap intra-op threads: torch otherwise starts one OpenMP thread per node core in every task process, and CPU ops
     # on >32k-element tensors (3-channel / large patches) slow down ~50x from oversubscription
     env = dict(os.environ, PYTHONUNBUFFERED='1', TOPO_THREADS=str(w), OMP_NUM_THREADS=str(w), MKL_NUM_THREADS=str(w))
